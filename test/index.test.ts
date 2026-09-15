@@ -59,6 +59,14 @@ function createRelease(
 	};
 }
 
+// Serves the requested page of a releases list, like the GitHub API
+function releasesPage(url: string, releases: unknown[]): unknown[] {
+	const { searchParams } = new URL(url);
+	const perPage = Number(searchParams.get('per_page'));
+	const page = Number(searchParams.get('page'));
+	return releases.slice((page - 1) * perPage, page * perPage);
+}
+
 function createFetchStub({
 	claudeMarkdown,
 	codexReleases,
@@ -80,14 +88,14 @@ function createFetchStub({
 		}
 
 		if (url.includes('/repos/openai/codex/releases')) {
-			return new Response(JSON.stringify(codexReleases), {
+			return new Response(JSON.stringify(releasesPage(url, codexReleases)), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
 			});
 		}
 
 		if (url.includes('/repos/google-gemini/gemini-cli/releases')) {
-			return new Response(JSON.stringify(geminiReleases), {
+			return new Response(JSON.stringify(releasesPage(url, geminiReleases)), {
 				status: 200,
 				headers: { 'Content-Type': 'application/json' },
 			});
@@ -294,4 +302,109 @@ test('GitHub requests include Authorization when GITHUB_TOKEN is configured', as
 
 	assert.ok(requestHeaders.length > 0);
 	assert.equal(requestHeaders[0].get('authorization'), 'Bearer secret-token');
+});
+
+test('GitHub checks stop reading releases once the last seen release is found', async () => {
+	// Like Codex: a run of prereleases above the newest stable release, and a long history below it
+	const codexReleases = [
+		...Array.from({ length: 10 }, (_, i) => createRelease(`v2.0.0-alpha.${10 - i}`, 'Alpha', { prerelease: true })),
+		createRelease('v1.9.0', 'Newest stable'),
+		...Array.from({ length: 489 }, (_, i) => createRelease(`v1.8.${488 - i}`)),
+	];
+	const env = createEnv({ [getKvKey('codex')]: 'v1.9.0' });
+	const requestedPages: string[] = [];
+	const notifications: string[] = [];
+
+	await processProduct(PRODUCTS_BY_ID.codex, env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({
+			claudeMarkdown: '',
+			codexReleases,
+			geminiReleases: [],
+			onRequest: (input) => {
+				const { searchParams } = new URL(String(input));
+				requestedPages.push(`page=${searchParams.get('page')}&per_page=${searchParams.get('per_page')}`);
+			},
+		}),
+		sendNotificationsFn: async (message) => {
+			notifications.push(message);
+			return true;
+		},
+	});
+
+	assert.deepEqual(requestedPages, ['page=1&per_page=30']);
+	assert.deepEqual(notifications, []);
+	assert.equal(await env.KV.get(getKvKey('codex')), 'v1.9.0');
+});
+
+test('GitHub checks keep paging when the last seen release is older than the first page', async () => {
+	const codexReleases = Array.from({ length: 250 }, (_, i) => createRelease(`v1.0.${249 - i}`));
+	const env = createEnv({ [getKvKey('codex')]: 'v1.0.99' });
+	const requestedPages: string[] = [];
+	const notifications: string[] = [];
+
+	await processProduct(PRODUCTS_BY_ID.codex, env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({
+			claudeMarkdown: '',
+			codexReleases,
+			geminiReleases: [],
+			onRequest: (input) => {
+				const { searchParams } = new URL(String(input));
+				requestedPages.push(`page=${searchParams.get('page')}&per_page=${searchParams.get('per_page')}`);
+			},
+		}),
+		sendNotificationsFn: async (message) => {
+			notifications.push(message);
+			return true;
+		},
+	});
+
+	assert.deepEqual(requestedPages, ['page=1&per_page=30', 'page=1&per_page=100', 'page=2&per_page=100']);
+	assert.equal(notifications.length, 150);
+	assert.equal(notifications[0], '📦 Codex v1.0.100\n\nv1.0.100 release notes');
+	assert.equal(notifications.at(-1), '📦 Codex v1.0.249\n\nv1.0.249 release notes');
+	assert.equal(await env.KV.get(getKvKey('codex')), 'v1.0.249');
+});
+
+test('bounded GitHub paging notifies and stores the same versions as reading every release', async () => {
+	const patterns: Record<string, (index: number) => Partial<{ draft: boolean; prerelease: boolean }>> = {
+		allStable: () => ({}),
+		everyOtherPrerelease: (index) => ({ prerelease: index % 2 === 1 }),
+		prereleasesFirst: (index) => ({ prerelease: index < 40 }),
+		allPrereleases: () => ({ prerelease: true }),
+		someDrafts: (index) => ({ draft: index % 7 === 0 }),
+	};
+
+	for (const size of [0, 1, 29, 30, 31, 99, 100, 101, 129, 130, 131, 250]) {
+		for (const [pattern, flags] of Object.entries(patterns)) {
+			const releases = Array.from({ length: size }, (_, index) => createRelease(`v${size - index}.0.0`, `Notes ${index}`, flags(index)));
+			const stableReleases = filterStableReleases(releases);
+
+			for (const lastSeen of [null, 'v0.0.0-missing', ...stableReleases.map((release) => release.tag_name)]) {
+				const env = createEnv(lastSeen ? { [getKvKey('codex')]: lastSeen } : {});
+				const notifications: string[] = [];
+
+				await processProduct(PRODUCTS_BY_ID.codex, env, {
+					logger: noopLogger,
+					fetchFn: createFetchStub({ claudeMarkdown: '', codexReleases: releases, geminiReleases: [] }),
+					sendNotificationsFn: async (message) => {
+						notifications.push(message);
+						return true;
+					},
+				});
+
+				// Reading every release notifies everything above the last seen one, oldest first, then stores the newest
+				const lastSeenIndex = stableReleases.findIndex((release) => release.tag_name === lastSeen);
+				const expectedNotifications = stableReleases
+					.slice(0, Math.max(lastSeenIndex, 0))
+					.reverse()
+					.map((release) => formatVersionMessage('Codex', { version: release.tag_name, content: release.body }));
+				const context = `${size} releases, ${pattern}, last seen ${lastSeen}`;
+
+				assert.deepEqual(notifications, expectedNotifications, context);
+				assert.equal(await env.KV.get(getKvKey('codex')), stableReleases[0]?.tag_name ?? lastSeen, context);
+			}
+		}
+	}
 });
