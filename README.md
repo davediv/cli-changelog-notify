@@ -63,7 +63,15 @@ Codex and Gemini CLI releases are fetched from the GitHub Releases API. The work
 wrangler secret put GITHUB_TOKEN
 ```
 
-### 4. Deploy
+### 4. Optional Manual Check Token
+
+`GET /check` runs a full release check on demand. It stays disabled until you set a token, and requests must send it as a bearer token.
+
+```bash
+wrangler secret put CHECK_TOKEN
+```
+
+### 5. Deploy
 
 ```bash
 npm run deploy
@@ -87,10 +95,10 @@ Test the scheduled handler:
 curl "http://localhost:8787/__scheduled?cron=*/15+*+*+*+*"
 ```
 
-Or trigger a manual check:
+Or trigger a manual check, after adding `CHECK_TOKEN=<token>` to `.dev.vars`:
 
 ```bash
-curl "http://localhost:8787/check"
+curl -H "Authorization: Bearer <token>" "http://localhost:8787/check"
 ```
 
 ## How It Works

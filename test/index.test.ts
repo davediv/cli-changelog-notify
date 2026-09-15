@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { timingSafeEqual } from 'node:crypto';
 
-import {
+import worker, {
 	PRODUCTS_BY_ID,
 	checkForUpdates,
 	filterStableReleases,
@@ -40,6 +41,13 @@ const noopLogger = {
 	warn() {},
 	error() {},
 };
+
+// The Workers runtime provides crypto.subtle.timingSafeEqual; Node does not
+if (!('timingSafeEqual' in crypto.subtle)) {
+	Object.defineProperty(crypto.subtle, 'timingSafeEqual', {
+		value: (a: ArrayBuffer, b: ArrayBuffer) => timingSafeEqual(new Uint8Array(a), new Uint8Array(b)),
+	});
+}
 
 function createEnv(initialValues: Record<string, string> = {}, overrides: Record<string, string> = {}) {
 	return {
@@ -566,4 +574,37 @@ test('a first run stores the changelog ETag with the latest version', async () =
 	});
 
 	assert.deepEqual(await env.KV.getWithMetadata(kvKey), { value: '1.0.0', metadata: { etag: '"v1"' }, cacheStatus: null });
+});
+
+test('manual /check runs only with the CHECK_TOKEN bearer token', async (t) => {
+	const requests: string[] = [];
+	const fetchStub = createFetchStub({
+		claudeMarkdown: '## 1.0.0\n- Claude',
+		codexReleases: [createRelease('v1.0.0')],
+		geminiReleases: [createRelease('v2.0.0')],
+	});
+	t.mock.method(globalThis, 'fetch', (input: string | URL | Request, init?: RequestInit) => {
+		requests.push(String(input));
+		return fetchStub(input, init);
+	});
+	t.mock.method(console, 'log', () => {});
+
+	const check = (env: object, authorization?: string) =>
+		worker.fetch(
+			new Request('https://worker.example/check', { headers: authorization ? { Authorization: authorization } : {} }),
+			env as never,
+		);
+
+	assert.equal((await check(createEnv(), 'Bearer anything')).status, 401);
+
+	const env = createEnv({}, { CHECK_TOKEN: 'secret-token' });
+	assert.equal((await check(env)).status, 401);
+	assert.equal((await check(env, 'Bearer wrong-token')).status, 401);
+	assert.equal((await check(env, 'secret-token')).status, 401);
+	assert.deepEqual(requests, []);
+
+	const authorized = await check(env, 'Bearer secret-token');
+	assert.equal(authorized.status, 200);
+	assert.equal(await authorized.text(), 'Release check completed');
+	assert.equal(requests.length, 3);
 });
