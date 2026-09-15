@@ -1,5 +1,5 @@
 {
-	"name": "claudecode-codex-gemini-changelog-notify",
+	"name": "cli-changelog-notify",
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",

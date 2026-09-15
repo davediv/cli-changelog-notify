@@ -4,7 +4,7 @@ const GITHUB_RELEASES_PER_PAGE = 100;
 // Usually reaches the last seen release in one request, even after a run of Codex prereleases
 const GITHUB_RELEASES_FIRST_PAGE_SIZE = 30;
 const GITHUB_API_BASE_URL = 'https://api.github.com';
-const GITHUB_USER_AGENT = 'claudecode-codex-gemini-changelog-notify';
+const GITHUB_USER_AGENT = 'cli-changelog-notify';
 
 const MAX_TELEGRAM_LENGTH = 4096;
 const MAX_DISCORD_LENGTH = 2000;
