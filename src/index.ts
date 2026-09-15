@@ -103,7 +103,7 @@ function truncateMessage(message: string, maxLength: number): string {
 
 // Escape special characters for Telegram Markdown V1
 function escapeTelegramMarkdown(text: string): string {
-	return text.replace(/([_*`\[])/g, '\\$1');
+	return text.replace(/([_*`[])/g, '\\$1');
 }
 
 export function getKvKey(productId: ProductId): string {

@@ -8,10 +8,19 @@
 		"dev": "wrangler dev --test-scheduled",
 		"start": "wrangler dev --test-scheduled",
 		"cf-typegen": "wrangler types",
-		"test": "node --experimental-strip-types --test"
+		"test": "node --experimental-strip-types --test",
+		"lint": "eslint src test --max-warnings 0",
+		"format:check": "prettier --check src test docs/cpu-review-follow-up.md package.json tsconfig.json eslint.config.mjs wrangler.jsonc",
+		"typecheck": "tsc --noEmit",
+		"build:check": "wrangler deploy --dry-run",
+		"validate": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build:check"
 	},
 	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"eslint": "10.10.0",
+		"prettier": "3.6.2",
 		"typescript": "^5.5.2",
+		"typescript-eslint": "8.70.0",
 		"wrangler": "^4.59.2"
 	}
 }
