@@ -1,5 +1,4 @@
 const CLAUDE_CHANGELOG_URL = 'https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md';
-const LEGACY_KV_KEY = 'last_seen_version';
 const KV_KEY_PREFIX = 'last_seen_version:';
 const GITHUB_RELEASES_PER_PAGE = 100;
 // Usually reaches the last seen release in one request, even after a run of Codex prereleases
@@ -378,23 +377,6 @@ async function fetchEntriesForProduct(
 	return { entries: await fetchGitHubEntries(product, env, fetchFn, checkpoint.value) };
 }
 
-export async function migrateLegacyClaudeCheckpoint(env: Env, logger: Logger = console): Promise<void> {
-	const claudeKey = getKvKey('claude-code');
-	const currentClaudeCheckpoint = await env.KV.get(claudeKey);
-
-	if (currentClaudeCheckpoint) {
-		return;
-	}
-
-	const legacyCheckpoint = await env.KV.get(LEGACY_KV_KEY);
-	if (!legacyCheckpoint) {
-		return;
-	}
-
-	await env.KV.put(claudeKey, legacyCheckpoint);
-	logger.log(`Migrated legacy Claude Code checkpoint to ${claudeKey}`);
-}
-
 export async function processProduct(product: ProductDefinition, env: Env, dependencies: CheckDependencies = {}): Promise<void> {
 	const logger = dependencies.logger ?? console;
 	const fetchFn = dependencies.fetchFn ?? fetch;
@@ -461,8 +443,6 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 
 export async function checkForUpdates(env: Env, dependencies: CheckDependencies = {}): Promise<void> {
 	const logger = dependencies.logger ?? console;
-
-	await migrateLegacyClaudeCheckpoint(env, logger);
 
 	for (const product of PRODUCTS) {
 		try {

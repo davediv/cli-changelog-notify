@@ -268,24 +268,30 @@ test('first deployment seeds checkpoints without sending notifications', async (
 	assert.deepEqual(notifications, []);
 });
 
-test('legacy Claude checkpoint migrates to the per-product key', async () => {
+test('the legacy Claude-only checkpoint is no longer read', async () => {
 	const env = createEnv({
 		last_seen_version: '1.0.0',
 		[getKvKey('codex')]: 'v2.0.0',
 		[getKvKey('gemini-cli')]: 'v3.0.0',
 	});
+	const notifications: string[] = [];
 
 	await checkForUpdates(env, {
 		logger: noopLogger,
 		fetchFn: createFetchStub({
-			claudeMarkdown: '## 1.0.0\n- Claude update',
+			claudeMarkdown: '## 1.1.0\n- Claude update\n\n## 1.0.0\n- Claude',
 			codexReleases: [createRelease('v2.0.0')],
 			geminiReleases: [createRelease('v3.0.0')],
 		}),
-		sendNotificationsFn: async () => true,
+		sendNotificationsFn: async (message) => {
+			notifications.push(message);
+			return true;
+		},
 	});
 
-	assert.equal(await env.KV.get(getKvKey('claude-code')), '1.0.0');
+	// A first run for Claude Code: the latest version is stored without notifying
+	assert.deepEqual(notifications, []);
+	assert.equal(await env.KV.get(getKvKey('claude-code')), '1.1.0');
 	assert.equal(await env.KV.get('last_seen_version'), '1.0.0');
 });
 
