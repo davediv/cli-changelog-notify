@@ -97,7 +97,7 @@ Each implementation commit must include its checklist update and validation.
 
 ## Validation and rollout
 
-- [ ] Establish repeatable lint, format, type, test, and Worker build checks.
+- [x] Establish repeatable lint, format, type, test, and Worker build checks.
 - [ ] Validate each implementation and commit it separately.
 - [ ] After rollout, compare CPU by unchanged check, new release, backlog, and
       upstream error. Track 304 rate, pages fetched, checkpoint progress, and
@@ -116,3 +116,11 @@ reduces waiting and may increase peak memory; network/KV waits are not CPU time.
 
 Implementation results, validation, and any evidence-based deferrals are recorded
 here as the checklist is processed.
+
+### Validation tooling
+
+Added pinned ESLint/TypeScript linting and Prettier, plus `npm run validate`.
+Worker type checking is explicitly scoped to `src` and generated Worker types;
+Node test files are linted and executed by `npm test`, not type-checked against
+the Worker runtime. Removed one unnecessary regex escape flagged by ESLint.
+Validation: lint, format, Worker type check, 19 tests, and dry-run bundle.
