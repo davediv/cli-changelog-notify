@@ -425,8 +425,8 @@ export default {
 		);
 	},
 
-	async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-		console.log(`Scheduled trigger fired at ${event.cron}`);
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		console.log(`Scheduled trigger fired at ${controller.cron}`);
 		ctx.waitUntil(checkForUpdates(env));
 	},
 } satisfies ExportedHandler<Env>;
