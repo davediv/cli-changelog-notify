@@ -463,8 +463,10 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 
 	if (latestVersion === lastSeenVersion) {
 		if (
-			snapshot.github &&
-			(snapshot.github.etag !== checkpoint.metadata?.github?.etag || snapshot.github.requestKey !== checkpoint.metadata?.github?.requestKey)
+			(snapshot.etag && snapshot.etag !== checkpoint.metadata?.etag) ||
+			(snapshot.github &&
+				(snapshot.github.etag !== checkpoint.metadata?.github?.etag ||
+					snapshot.github.requestKey !== checkpoint.metadata?.github?.requestKey))
 		) {
 			await env.KV.put(kvKey, latestVersion, checkpointOptions);
 		}

@@ -14,6 +14,7 @@ import worker, {
 import type { VersionEntry } from '../src/index.ts';
 
 class MockKVNamespace {
+	putCount = 0;
 	private readonly store = new Map<string, { value: string; metadata: unknown }>();
 
 	constructor(initialValues: Record<string, string> = {}, initialMetadata: Record<string, unknown> = {}) {
@@ -32,6 +33,7 @@ class MockKVNamespace {
 	}
 
 	async put(key: string, value: string, options: { metadata?: unknown } = {}): Promise<void> {
+		this.putCount++;
 		this.store.set(key, { value, metadata: options.metadata ?? null });
 	}
 }
@@ -750,4 +752,40 @@ test('GitHub 304 without a matching validator is an error, not a successful chec
 		}),
 		/Failed to fetch GitHub releases/,
 	);
+});
+
+test('Claude refreshes missing or stale ETags without changing the version or notifying', async () => {
+	for (const metadata of [null, { etag: '"old"' }]) {
+		const key = getKvKey('claude-code');
+		const env = { KV: new MockKVNamespace({ [key]: '1.0.0' }, { [key]: metadata }) };
+		const headers: (string | null)[] = [];
+		const deps = {
+			logger: noopLogger,
+			fetchFn: createFetchStub({
+				claudeMarkdown: '## 1.0.0\nEdited notes',
+				claudeEtag: '"current"',
+				codexReleases: [],
+				geminiReleases: [],
+				onRequest: (_, init) => headers.push(new Headers(init?.headers).get('If-None-Match')),
+			}),
+			sendNotificationsFn: async () => {
+				assert.fail('No notifications expected');
+			},
+		};
+		await processProduct(PRODUCTS_BY_ID['claude-code'], env, deps);
+		await processProduct(PRODUCTS_BY_ID['claude-code'], env, deps);
+		assert.deepEqual(headers, [metadata?.etag ?? null, '"current"']);
+		assert.equal(env.KV.putCount, 1);
+		assert.equal(await env.KV.get(key), '1.0.0');
+	}
+});
+
+test('Claude does not write unchanged metadata even when the upstream returns 200', async () => {
+	const key = getKvKey('claude-code');
+	const env = { KV: new MockKVNamespace({ [key]: '1.0.0' }, { [key]: { etag: '"current"' } }) };
+	await processProduct(PRODUCTS_BY_ID['claude-code'], env, {
+		logger: noopLogger,
+		fetchFn: async () => new Response('## 1.0.0\nNotes', { headers: { ETag: '"current"' } }),
+	});
+	assert.equal(env.KV.putCount, 0);
 });
