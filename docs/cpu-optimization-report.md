@@ -46,6 +46,8 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
 
 > Don't deploy a checkout older than `fd2c500`. It would remove Codex and Gemini CLI monitoring, and the old code reads the legacy `last_seen_version` key (unchanged since April 2026), so it would likely re-send every Claude Code release since then.
 
+> Expect a burst of Codex notifications. Production's Codex checkpoint has been stuck at `rust-v0.148.0` (released 2026-08-18) while Claude Code and Gemini CLI are current, so Codex checks have been failing. The first successful Codex check after #1 ships sends the 14 stable releases published since then in one run. Look in Workers Logs for `Failed to process Codex` or `Some Codex notifications failed` before deploying, or move the checkpoint to the latest release if you'd rather skip the backlog.
+
 ### High impact / Low effort (do these first)
 
 - [x] **1. Stop paging GitHub once the last-seen release is found, starting with a 30-release first page.**
@@ -92,13 +94,14 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
   - 20 releases come to 25 KB instead of 7.5 MB, and the Codex parse drops from ~15 ms to ~0.03 ms.
   - It needs a `GITHUB_TOKEN`; GraphQL doesn't accept anonymous requests.
   - It changes behavior. GraphQL's order matched the REST order for only the first 2 Codex and 7 Gemini CLI releases (the REST list isn't sorted by time either), so which releases count as "new" could change. Ship it only with a comparison test and sign-off.
+  - **Status:** not started. It changes behavior and production has no `GITHUB_TOKEN`, so it waits for sign-off.
 
 ### Low impact
 
-- [x] **4. Parse the changelog only down to the last-seen version.** Cold parse goes from 2.5 ms to 0.24 ms, with identical output on 1,037 cases, and the cost stops growing with the file. After #2 this only runs when the changelog actually changes.
-- [x] **5. Protect `/check`** with a secret header, or set `workers_dev: false` if you don't use it. It got one request in 30 days, but each hit runs a full check and uses GitHub quota.
+- [x] **4. Parse the changelog only down to the last-seen version.** Measured on the committed code, a cold parse of the 692 KB changelog drops from 2.55 ms to about 0.5 ms, output matches the old parser at every stopping point, and the cost stops growing with the file. After #2 this only runs when the changelog actually changes.
+- [x] **5. Protect `/check`** with a secret header, or set `workers_dev: false` if you don't use it. It got one request in 30 days, but each hit runs a full check and uses GitHub quota. Done with `Authorization: Bearer <CHECK_TOKEN>`; `/check` stays disabled until that secret is set.
 - [x] **6. Remove `migrateLegacyClaudeCheckpoint` from every run.** The migration finished in April 2026. It saves a KV read per run; update the legacy-migration test too.
-- [ ] **7. Add `GITHUB_TOKEN` only after #1 is deployed.** It improves reliability, not CPU. Added before #1, it would make every run a ~1 s run.
+- [ ] **7. Add `GITHUB_TOKEN` only after #1 is deployed.** It improves reliability, not CPU. Added before #1, it would make every run a ~1 s run. This is a deployment step (`wrangler secret put GITHUB_TOKEN`), not a code change.
 - [x] **8. Add a CPU safety limit** such as `"limits": { "cpu_ms": 5000 }`, which leaves room for a rare full-history run.
 
 ### After deploying
