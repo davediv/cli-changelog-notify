@@ -99,7 +99,7 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
 - [x] **5. Protect `/check`** with a secret header, or set `workers_dev: false` if you don't use it. It got one request in 30 days, but each hit runs a full check and uses GitHub quota.
 - [x] **6. Remove `migrateLegacyClaudeCheckpoint` from every run.** The migration finished in April 2026. It saves a KV read per run; update the legacy-migration test too.
 - [ ] **7. Add `GITHUB_TOKEN` only after #1 is deployed.** It improves reliability, not CPU. Added before #1, it would make every run a ~1 s run.
-- [ ] **8. Add a CPU safety limit** such as `"limits": { "cpu_ms": 5000 }`, which leaves room for a rare full-history run.
+- [x] **8. Add a CPU safety limit** such as `"limits": { "cpu_ms": 5000 }`, which leaves room for a rare full-history run.
 
 ### After deploying
 
