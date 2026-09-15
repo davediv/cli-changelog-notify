@@ -189,7 +189,7 @@ test('parseChangelog matches the line-by-line parser at every stopping point', (
 		'## 1.1\n- a\n## 1.0\n- b\n## 1.1\n- c\n## 0.9\n- d\n',
 		'## 1.1\n```\n## 1.0.5 in code\n```\n## 1.0\n- b\n',
 		'## 1.1\n  ## 1.0.5\n- a\n## 1.0\n',
-		'## 1.1\n- a ## 1.0.5\n- b\r## 1.0.4\n## 1.0\n',
+		'## 1.1\n- a' + String.fromCharCode(0x2028) + '## 1.0.5\n- b\r## 1.0.4\n## 1.0\n',
 		'## 1.1\n   \n\t\n## 1.0\n  x  \n',
 		'### 1.1\n## 1.0\n- a\n',
 		'## 1.2.3.4 extra\n- a\n## 1.2abc\n- b\n',
