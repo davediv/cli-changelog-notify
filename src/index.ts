@@ -21,6 +21,8 @@ interface Env {
 	DISCORD_WEBHOOK_URL?: string;
 	SLACK_WEBHOOK_URL?: string;
 	GITHUB_TOKEN?: string;
+	// Bearer token for the manual /check endpoint, which stays disabled without it
+	CHECK_TOKEN?: string;
 }
 
 export interface VersionEntry {
@@ -472,11 +474,30 @@ export async function checkForUpdates(env: Env, dependencies: CheckDependencies 
 	}
 }
 
+// Hashes both values so the comparison takes the same time whatever the token and its length
+async function isAuthorizedCheck(req: Request, env: Env): Promise<boolean> {
+	if (!env.CHECK_TOKEN) {
+		return false;
+	}
+
+	const encoder = new TextEncoder();
+	const [provided, expected] = await Promise.all([
+		crypto.subtle.digest('SHA-256', encoder.encode(req.headers.get('Authorization') ?? '')),
+		crypto.subtle.digest('SHA-256', encoder.encode(`Bearer ${env.CHECK_TOKEN}`)),
+	]);
+	return crypto.subtle.timingSafeEqual(provided, expected);
+}
+
 export default {
 	async fetch(req: Request, env: Env): Promise<Response> {
 		const url = new URL(req.url);
 
 		if (url.pathname === '/check') {
+			// A check costs a full run and GitHub API quota, so only token holders can trigger one
+			if (!(await isAuthorizedCheck(req, env))) {
+				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
+			}
+
 			await checkForUpdates(env);
 			return new Response('Release check completed');
 		}
@@ -484,7 +505,7 @@ export default {
 		url.pathname = '/__scheduled';
 		url.searchParams.set('cron', '*/15 * * * *');
 		return new Response(
-			`CLI Release Monitor\n\nTracking: Claude Code, Codex, Gemini CLI\n\nTo test the scheduled handler, run:\ncurl "${url.href}"\n\nOr trigger a manual check:\ncurl "${new URL('/check', req.url).href}"`,
+			`CLI Release Monitor\n\nTracking: Claude Code, Codex, Gemini CLI\n\nTo test the scheduled handler, run:\ncurl "${url.href}"\n\nOr trigger a manual check:\ncurl -H "Authorization: Bearer $CHECK_TOKEN" "${new URL('/check', req.url).href}"`,
 		);
 	},
 
