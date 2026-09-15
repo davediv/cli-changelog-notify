@@ -113,36 +113,29 @@ export function normalizeDisplayVersion(version: string): string {
 	return version.replace(/^v/i, '');
 }
 
-// Parse changelog markdown into version entries
-export function parseChangelog(markdown: string): VersionEntry[] {
+// Parse changelog markdown into version entries, newest first. With stopAfterVersion, parsing ends at that
+// entry, since older entries are never needed to find new versions.
+export function parseChangelog(markdown: string, stopAfterVersion?: string): VersionEntry[] {
 	const entries: VersionEntry[] = [];
-	const lines = markdown.split('\n');
+	let current: { version: string; contentStart: number } | null = null;
 
-	let currentVersion: string | null = null;
-	let currentContent: string[] = [];
+	// `(?:^|\n)` matches a heading at the start of any line, like `^` on each line of markdown.split('\n')
+	for (const match of markdown.matchAll(/(?:^|\n)## (\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)/g)) {
+		const headingStart = match[0].startsWith('\n') ? match.index + 1 : match.index;
 
-	for (const line of lines) {
-		const versionMatch = line.match(/^## (\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)/);
-
-		if (versionMatch) {
-			if (currentVersion) {
-				entries.push({
-					version: currentVersion,
-					content: currentContent.join('\n').trim(),
-				});
+		if (current) {
+			entries.push({ version: current.version, content: markdown.slice(current.contentStart, headingStart - 1).trim() });
+			if (current.version === stopAfterVersion) {
+				return entries;
 			}
-			currentVersion = versionMatch[1];
-			currentContent = [];
-		} else if (currentVersion) {
-			currentContent.push(line);
 		}
+
+		const lineEnd = markdown.indexOf('\n', match.index + match[0].length);
+		current = { version: match[1], contentStart: lineEnd === -1 ? markdown.length : lineEnd + 1 };
 	}
 
-	if (currentVersion) {
-		entries.push({
-			version: currentVersion,
-			content: currentContent.join('\n').trim(),
-		});
+	if (current) {
+		entries.push({ version: current.version, content: markdown.slice(current.contentStart).trim() });
 	}
 
 	return entries;
@@ -272,13 +265,14 @@ async function sendNotifications(message: string, env: Env, logger: Logger = con
 	return successCount > 0;
 }
 
-// Returns null when the changelog is unchanged since the stored ETag
+// Returns null when the changelog is unchanged since the checkpoint's ETag
 async function fetchClaudeEntries(
 	product: ProductDefinition,
 	fetchFn: FetchFn,
 	logger: Logger,
-	etag: string | undefined,
+	checkpoint: KVNamespaceGetWithMetadataResult<string, CheckpointMetadata>,
 ): Promise<SourceSnapshot | null> {
+	const etag = checkpoint.metadata?.etag;
 	const response = await fetchFn(product.changelogUrl!, etag ? { headers: { 'If-None-Match': etag } } : undefined);
 	// Checked before `ok`, which is false for 304
 	if (response.status === 304) {
@@ -290,7 +284,7 @@ async function fetchClaudeEntries(
 	}
 
 	const markdown = await response.text();
-	const entries = parseChangelog(markdown);
+	const entries = parseChangelog(markdown, checkpoint.value ?? undefined);
 
 	if (entries.length === 0) {
 		logger.log(`No version entries found for ${product.label}`);
@@ -376,7 +370,7 @@ async function fetchEntriesForProduct(
 	checkpoint: KVNamespaceGetWithMetadataResult<string, CheckpointMetadata>,
 ): Promise<SourceSnapshot | null> {
 	if (product.source === 'changelog') {
-		return fetchClaudeEntries(product, fetchFn, logger, checkpoint.metadata?.etag);
+		return fetchClaudeEntries(product, fetchFn, logger, checkpoint);
 	}
 
 	return { entries: await fetchGitHubEntries(product, env, fetchFn, checkpoint.value) };
