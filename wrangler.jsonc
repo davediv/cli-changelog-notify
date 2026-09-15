@@ -8,19 +8,17 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-27",
 	"observability": {
-		"enabled": true
+		"enabled": true,
 	},
 	"triggers": {
-		"crons": [
-			"*/15 * * * *"
-		]
+		"crons": ["*/15 * * * *"],
 	},
 	"kv_namespaces": [
 		{
 			"binding": "KV",
-			"id": "dcce526cfb7a441d85810716c58a70b9"
-		}
-	]
+			"id": "dcce526cfb7a441d85810716c58a70b9",
+		},
+	],
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

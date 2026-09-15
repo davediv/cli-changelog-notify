@@ -48,7 +48,7 @@ function createRelease(
 	overrides: Partial<{
 		draft: boolean;
 		prerelease: boolean;
-	}> = {}
+	}> = {},
 ) {
 	return {
 		tag_name: tagName,
@@ -122,7 +122,7 @@ test('filterStableReleases excludes drafts and prereleases', () => {
 
 	assert.deepEqual(
 		releases.map((release) => release.tag_name),
-		['v1.0.0']
+		['v1.0.0'],
 	);
 });
 
@@ -148,10 +148,7 @@ test('formatVersionMessage strips a leading v for display without changing store
 
 	assert.deepEqual(notifications, ['📦 Codex v1.2.3\n\nCodex notes']);
 	assert.equal(await env.KV.get(getKvKey('codex')), 'v1.2.3');
-	assert.equal(
-		formatVersionMessage('Codex', { version: 'v9.9.9', content: 'Notes' }),
-		'📦 Codex v9.9.9\n\nNotes'
-	);
+	assert.equal(formatVersionMessage('Codex', { version: 'v9.9.9', content: 'Notes' }), '📦 Codex v9.9.9\n\nNotes');
 });
 
 test('first deployment seeds checkpoints without sending notifications', async () => {
@@ -209,11 +206,7 @@ test('multiple missed releases are notified oldest first', async () => {
 		logger: noopLogger,
 		fetchFn: createFetchStub({
 			claudeMarkdown: '## 1.0.0\n- Claude',
-			codexReleases: [
-				createRelease('v0.3.0', 'Newest'),
-				createRelease('v0.2.0', 'Middle'),
-				createRelease('v0.1.0', 'Oldest'),
-			],
+			codexReleases: [createRelease('v0.3.0', 'Newest'), createRelease('v0.2.0', 'Middle'), createRelease('v0.1.0', 'Oldest')],
 			geminiReleases: [createRelease('v0.1.0')],
 		}),
 		sendNotificationsFn: async (message) => {
@@ -279,7 +272,7 @@ test('GitHub requests include Authorization when GITHUB_TOKEN is configured', as
 		},
 		{
 			GITHUB_TOKEN: 'secret-token',
-		}
+		},
 	);
 
 	const requestHeaders: Headers[] = [];

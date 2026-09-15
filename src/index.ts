@@ -1,5 +1,4 @@
-const CLAUDE_CHANGELOG_URL =
-	'https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md';
+const CLAUDE_CHANGELOG_URL = 'https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md';
 const LEGACY_KV_KEY = 'last_seen_version';
 const KV_KEY_PREFIX = 'last_seen_version:';
 const GITHUB_RELEASES_PER_PAGE = 100;
@@ -78,9 +77,7 @@ export const PRODUCTS: readonly ProductDefinition[] = [
 	},
 ] as const;
 
-export const PRODUCTS_BY_ID = Object.fromEntries(
-	PRODUCTS.map((product) => [product.id, product])
-) as Record<ProductId, ProductDefinition>;
+export const PRODUCTS_BY_ID = Object.fromEntries(PRODUCTS.map((product) => [product.id, product])) as Record<ProductId, ProductDefinition>;
 
 // Truncate message to max length with ellipsis
 function truncateMessage(message: string, maxLength: number): string {
@@ -147,15 +144,13 @@ export function getNewVersions(
 	entries: VersionEntry[],
 	lastSeenVersion: string,
 	logger: Logger = console,
-	productLabel = 'product'
+	productLabel = 'product',
 ): VersionEntry[] {
 	const lastSeenIndex = entries.findIndex((entry) => entry.version === lastSeenVersion);
 
 	// If last seen version not found in the source, treat as first run to avoid spam.
 	if (lastSeenIndex === -1) {
-		logger.warn(
-			`Last seen version ${lastSeenVersion} not found for ${productLabel}, treating as first run`
-		);
+		logger.warn(`Last seen version ${lastSeenVersion} not found for ${productLabel}, treating as first run`);
 		return [];
 	}
 
@@ -169,12 +164,7 @@ export function formatVersionMessage(productLabel: string, entry: VersionEntry):
 }
 
 // Send notification to Telegram
-async function sendTelegram(
-	message: string,
-	botToken: string,
-	chatId: string,
-	threadId?: string
-): Promise<NotificationResult> {
+async function sendTelegram(message: string, botToken: string, chatId: string, threadId?: string): Promise<NotificationResult> {
 	const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
 	const truncatedMessage = truncateMessage(message, MAX_TELEGRAM_LENGTH);
 	const escapedMessage = escapeTelegramMarkdown(truncatedMessage);
@@ -237,17 +227,11 @@ async function sendSlack(message: string, webhookUrl: string): Promise<Notificat
 }
 
 // Send notifications to all configured platforms
-async function sendNotifications(
-	message: string,
-	env: Env,
-	logger: Logger = console
-): Promise<boolean> {
+async function sendNotifications(message: string, env: Env, logger: Logger = console): Promise<boolean> {
 	const promises: Promise<NotificationResult>[] = [];
 
 	if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) {
-		promises.push(
-			sendTelegram(message, env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, env.TELEGRAM_THREAD_ID)
-		);
+		promises.push(sendTelegram(message, env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, env.TELEGRAM_THREAD_ID));
 	}
 
 	if (env.DISCORD_WEBHOOK_URL) {
@@ -275,11 +259,7 @@ async function sendNotifications(
 	return successCount > 0;
 }
 
-async function fetchClaudeEntries(
-	product: ProductDefinition,
-	fetchFn: FetchFn,
-	logger: Logger
-): Promise<VersionEntry[]> {
+async function fetchClaudeEntries(product: ProductDefinition, fetchFn: FetchFn, logger: Logger): Promise<VersionEntry[]> {
 	const response = await fetchFn(product.changelogUrl!);
 	if (!response.ok) {
 		throw new Error(`Failed to fetch changelog: ${response.status}`);
@@ -295,11 +275,7 @@ async function fetchClaudeEntries(
 	return entries;
 }
 
-async function fetchGitHubEntries(
-	product: ProductDefinition,
-	env: Env,
-	fetchFn: FetchFn
-): Promise<VersionEntry[]> {
+async function fetchGitHubEntries(product: ProductDefinition, env: Env, fetchFn: FetchFn): Promise<VersionEntry[]> {
 	const releases: VersionEntry[] = [];
 
 	for (let page = 1; ; page += 1) {
@@ -340,12 +316,7 @@ async function fetchGitHubEntries(
 	return releases;
 }
 
-async function fetchEntriesForProduct(
-	product: ProductDefinition,
-	env: Env,
-	fetchFn: FetchFn,
-	logger: Logger
-): Promise<VersionEntry[]> {
+async function fetchEntriesForProduct(product: ProductDefinition, env: Env, fetchFn: FetchFn, logger: Logger): Promise<VersionEntry[]> {
 	if (product.source === 'changelog') {
 		return fetchClaudeEntries(product, fetchFn, logger);
 	}
@@ -353,10 +324,7 @@ async function fetchEntriesForProduct(
 	return fetchGitHubEntries(product, env, fetchFn);
 }
 
-export async function migrateLegacyClaudeCheckpoint(
-	env: Env,
-	logger: Logger = console
-): Promise<void> {
+export async function migrateLegacyClaudeCheckpoint(env: Env, logger: Logger = console): Promise<void> {
 	const claudeKey = getKvKey('claude-code');
 	const currentClaudeCheckpoint = await env.KV.get(claudeKey);
 
@@ -373,16 +341,11 @@ export async function migrateLegacyClaudeCheckpoint(
 	logger.log(`Migrated legacy Claude Code checkpoint to ${claudeKey}`);
 }
 
-export async function processProduct(
-	product: ProductDefinition,
-	env: Env,
-	dependencies: CheckDependencies = {}
-): Promise<void> {
+export async function processProduct(product: ProductDefinition, env: Env, dependencies: CheckDependencies = {}): Promise<void> {
 	const logger = dependencies.logger ?? console;
 	const fetchFn = dependencies.fetchFn ?? fetch;
 	const notificationSender =
-		dependencies.sendNotificationsFn ??
-		((message: string, runtimeEnv: Env) => sendNotifications(message, runtimeEnv, logger));
+		dependencies.sendNotificationsFn ?? ((message: string, runtimeEnv: Env) => sendNotifications(message, runtimeEnv, logger));
 
 	const entries = await fetchEntriesForProduct(product, env, fetchFn, logger);
 	if (entries.length === 0) {
@@ -431,10 +394,7 @@ export async function processProduct(
 	}
 }
 
-export async function checkForUpdates(
-	env: Env,
-	dependencies: CheckDependencies = {}
-): Promise<void> {
+export async function checkForUpdates(env: Env, dependencies: CheckDependencies = {}): Promise<void> {
 	const logger = dependencies.logger ?? console;
 
 	await migrateLegacyClaudeCheckpoint(env, logger);
@@ -461,7 +421,7 @@ export default {
 		url.pathname = '/__scheduled';
 		url.searchParams.set('cron', '*/15 * * * *');
 		return new Response(
-			`CLI Release Monitor\n\nTracking: Claude Code, Codex, Gemini CLI\n\nTo test the scheduled handler, run:\ncurl "${url.href}"\n\nOr trigger a manual check:\ncurl "${new URL('/check', req.url).href}"`
+			`CLI Release Monitor\n\nTracking: Claude Code, Codex, Gemini CLI\n\nTo test the scheduled handler, run:\ncurl "${url.href}"\n\nOr trigger a manual check:\ncurl "${new URL('/check', req.url).href}"`,
 		);
 	},
 
