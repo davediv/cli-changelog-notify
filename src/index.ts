@@ -543,7 +543,7 @@ export default {
 		}
 
 		url.pathname = '/__scheduled';
-		url.searchParams.set('cron', '*/15 * * * *');
+		url.searchParams.set('cron', '0 * * * *');
 		return new Response(
 			`CLI Release Monitor\n\nTracking: Claude Code, Codex, Gemini CLI\n\nTo test the scheduled handler, run:\ncurl "${url.href}"\n\nOr trigger a manual check:\ncurl -H "Authorization: Bearer $CHECK_TOKEN" "${new URL('/check', req.url).href}"`,
 		);

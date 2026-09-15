@@ -11,7 +11,7 @@
 		"enabled": true,
 	},
 	"triggers": {
-		"crons": ["*/15 * * * *"],
+		"crons": ["0 * * * *"],
 	},
 	"limits": {
 		// Normal runs need tens of milliseconds; this leaves room for a rare full read of the GitHub release history

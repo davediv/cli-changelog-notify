@@ -1,10 +1,10 @@
 # CLI Release Notify
 
-Cloudflare Worker that monitors release updates for Claude Code, Codex, and Gemini CLI every 15 minutes and sends notifications to Telegram, Discord, and/or Slack when new updates are detected.
+Cloudflare Worker that monitors release updates for Claude Code, Codex, and Gemini CLI every hour and sends notifications to Telegram, Discord, and/or Slack when new updates are detected.
 
 ## Features
 
-- Scheduled checks every 15 minutes using Cloudflare Workers Cron Triggers
+- Scheduled checks every hour using Cloudflare Workers Cron Triggers
 - Tracks Claude Code via the upstream changelog
 - Tracks Codex and Gemini CLI via stable GitHub releases only
 - Automatic diffing to detect only new updates
@@ -91,7 +91,7 @@ npm test
 Test the scheduled handler:
 
 ```bash
-curl "http://localhost:8787/__scheduled?cron=*/15+*+*+*+*"
+curl "http://localhost:8787/__scheduled?cron=0+*+*+*+*"
 ```
 
 Or trigger a manual check, after adding `CHECK_TOKEN=<token>` to `.dev.vars`:
@@ -102,7 +102,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:8787/check"
 
 ## How It Works
 
-1. Every 15 minutes, the worker checks Claude Code, Codex, and Gemini CLI in a fixed order
+1. Every hour, the worker checks Claude Code, Codex, and Gemini CLI in a fixed order
 2. Claude Code is parsed from the upstream changelog markdown
 3. Codex and Gemini CLI are read from stable GitHub releases only
 4. Each product is compared with its own last seen version stored in KV
