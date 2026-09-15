@@ -1,6 +1,11 @@
-# CLI Release Notify
+# CLI Changelog Notify
 
 Cloudflare Worker that monitors release updates for Claude Code, Codex, and Gemini CLI every hour and sends notifications to Telegram, Discord, and/or Slack when new updates are detected.
+
+Repository: [davediv/cli-changelog-notify](https://github.com/davediv/cli-changelog-notify).
+
+The production Cloudflare Worker remains named `claudecode-changelog-notify`.
+Keep that name in `wrangler.jsonc` so deployments update the existing Worker.
 
 ## Features
 
@@ -16,7 +21,7 @@ Cloudflare Worker that monitors release updates for Claude Code, Codex, and Gemi
 ### 1. Create KV Namespace
 
 ```bash
-wrangler kv namespace create claudecode-codex-gemini-changelog-notify-kv
+wrangler kv namespace create cli-changelog-notify-kv
 ```
 
 Copy the `id` from the output and update `wrangler.jsonc`:
