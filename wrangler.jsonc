@@ -13,6 +13,10 @@
 	"triggers": {
 		"crons": ["*/15 * * * *"],
 	},
+	"limits": {
+		// Normal runs need tens of milliseconds; this leaves room for a rare full read of the GitHub release history
+		"cpu_ms": 5000,
+	},
 	"kv_namespaces": [
 		{
 			"binding": "KV",
