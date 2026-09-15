@@ -614,3 +614,140 @@ test('manual /check runs only with the CHECK_TOKEN bearer token', async (t) => {
 	assert.equal(await authorized.text(), 'Release check completed');
 	assert.equal(requests.length, 3);
 });
+
+// Conditional first-page responses, with later pages served independently.
+function githubConditionalStub(releases: ReturnType<typeof createRelease>[], requests: { page: number; etag: string | null }[]) {
+	return async (input: string | URL | Request, init?: RequestInit) => {
+		const url = new URL(String(input));
+		const page = Number(url.searchParams.get('page'));
+		const etag = new Headers(init?.headers).get('If-None-Match');
+		requests.push({ page, etag });
+		if (etag === '"current"') return new Response(null, { status: 304 });
+		return new Response(JSON.stringify(releasesPage(url.toString(), releases)), { headers: { ETag: '"current"' } });
+	};
+}
+
+test('GitHub validators skip unchanged bodies for both products, including seeded checkpoints', async () => {
+	for (const id of ['codex', 'gemini-cli'] as const) {
+		for (const initial of [null, 'v1.0.0']) {
+			const key = getKvKey(id);
+			const env = createEnv(initial ? { [key]: initial } : {});
+			const requests: { page: number; etag: string | null }[] = [];
+			const deps = {
+				logger: noopLogger,
+				fetchFn: githubConditionalStub([createRelease('v1.0.0')], requests),
+				sendNotificationsFn: async () => {
+					assert.fail('No notifications expected');
+				},
+			};
+			await processProduct(PRODUCTS_BY_ID[id], env, deps);
+			const checkpoint = await env.KV.getWithMetadata(key);
+			await processProduct(PRODUCTS_BY_ID[id], env, deps);
+			assert.deepEqual(
+				requests.map((r) => r.etag),
+				[null, '"current"'],
+			);
+			assert.deepEqual(await env.KV.getWithMetadata(key), checkpoint);
+		}
+	}
+});
+
+test('GitHub validators refresh after note edits without a new version', async () => {
+	const key = getKvKey('codex');
+	const env = createEnv({ [key]: 'v1.0.0' });
+	const requests: { page: number; etag: string | null }[] = [];
+	const deps = { logger: noopLogger, fetchFn: githubConditionalStub([createRelease('v1.0.0')], requests) };
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	const checkpoint = await env.KV.getWithMetadata(key);
+	await env.KV.put(key, checkpoint.value!, { metadata: { github: { ...checkpoint.metadata.github, etag: '"old"' } } });
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	assert.deepEqual(
+		requests.map((r) => r.etag),
+		[null, '"old"', '"current"'],
+	);
+});
+
+test('GitHub validators are invalidated by credential or repository changes', async () => {
+	const key = getKvKey('codex');
+	const env = createEnv({ [key]: 'v1.0.0' });
+	const requests: { page: number; etag: string | null }[] = [];
+	const deps = { logger: noopLogger, fetchFn: githubConditionalStub([createRelease('v1.0.0')], requests) };
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	await processProduct(PRODUCTS_BY_ID.codex, { ...env, GITHUB_TOKEN: 'test-token' }, deps);
+	assert.ok(!JSON.stringify(await env.KV.getWithMetadata(key)).includes('test-token'));
+	await processProduct({ ...PRODUCTS_BY_ID.codex, githubRepo: 'different/repo' }, env, deps);
+	assert.deepEqual(
+		requests.map((r) => r.etag),
+		[null, null, null],
+	);
+});
+
+test('failed GitHub notifications preserve the validator and retry the same releases', async () => {
+	const key = getKvKey('codex');
+	const env = createEnv({ [key]: 'v1.0.0' });
+	const releases = [createRelease('v1.0.0')];
+	const requests: { page: number; etag: string | null }[] = [];
+	const deps = { logger: noopLogger, fetchFn: githubConditionalStub(releases, requests) };
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	const checkpoint = await env.KV.getWithMetadata(key);
+	await env.KV.put(key, checkpoint.value!, { metadata: { github: { ...checkpoint.metadata.github, etag: '"old"' } } });
+	const before = await env.KV.getWithMetadata(key);
+	releases.unshift(createRelease('v1.1.0'));
+	const messages: string[] = [];
+	for (let run = 0; run < 2; run++) {
+		await processProduct(PRODUCTS_BY_ID.codex, env, {
+			...deps,
+			sendNotificationsFn: async (message) => {
+				messages.push(message);
+				return false;
+			},
+		});
+		assert.deepEqual(await env.KV.getWithMetadata(key), before);
+	}
+	assert.equal(messages.length, 2);
+	assert.equal(messages[0], messages[1]);
+	assert.deepEqual(
+		requests.map((r) => r.etag),
+		[null, '"old"', '"old"'],
+	);
+	await processProduct(PRODUCTS_BY_ID.codex, env, { ...deps, sendNotificationsFn: async () => true });
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	assert.equal(await env.KV.get(key), 'v1.1.0');
+	assert.equal(requests.at(-1)?.etag, '"current"');
+});
+
+test('an unchanged prerelease-only first page cannot hide changes on later pages', async () => {
+	const key = getKvKey('codex');
+	const env = createEnv({ [key]: 'v1.0.0' });
+	const releases = [
+		...Array.from({ length: 30 }, (_, i) => createRelease(`alpha-${i}`, '', { prerelease: true })),
+		createRelease('v1.0.0'),
+	];
+	const requests: { page: number; etag: string | null }[] = [];
+	const messages: string[] = [];
+	const deps = {
+		logger: noopLogger,
+		fetchFn: githubConditionalStub(releases, requests),
+		sendNotificationsFn: async (message: string) => {
+			messages.push(message);
+			return true;
+		},
+	};
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	releases.splice(30, 0, createRelease('v1.1.0'));
+	await processProduct(PRODUCTS_BY_ID.codex, env, deps);
+	assert.equal(messages.length, 1);
+	assert.equal(await env.KV.get(key), 'v1.1.0');
+	assert.ok(requests.every((r) => r.etag === null));
+});
+
+test('GitHub 304 without a matching validator is an error, not a successful check', async () => {
+	await assert.rejects(
+		processProduct(PRODUCTS_BY_ID.codex, createEnv(), {
+			logger: noopLogger,
+			fetchFn: async () => new Response(null, { status: 304 }),
+		}),
+		/Failed to fetch GitHub releases/,
+	);
+});
