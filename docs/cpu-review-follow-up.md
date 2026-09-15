@@ -68,7 +68,7 @@ Each implementation commit must include its checklist update and validation.
       the 304 shortcut when the first page contains the checkpoint. Never save a
       validator over failed notifications; never let a first-page 304 hide an
       unresolved backlog. Handle 304 before `response.ok`.
-- [ ] **3. Refresh Claude's ETag when the version is unchanged.** Write metadata
+- [x] **3. Refresh Claude's ETag when the version is unchanged.** Write metadata
       only if the returned validator differs, retaining the same version and
       existing failure/retry semantics.
 
@@ -137,3 +137,13 @@ Validation: all 25 tests pass, including unchanged/seeded checkpoints for both
 products, edited notes, credential/repository changes, notification retries,
 prerelease-only first pages, and unexpected 304s. ESLint, Prettier, Worker type
 checking, and Wrangler dry-run bundle all pass.
+
+### Fix 3 — Claude validator refresh
+
+When the latest version matches the checkpoint, save a missing or changed ETag
+once. Further 304 responses and unchanged ETags perform no KV writes. Notification
+failures retain their old checkpoint and ETag.
+
+Validation: all 27 tests pass, including missing metadata, edited notes, no
+notifications on an unchanged version, and no redundant writes. ESLint, Prettier,
+Worker type checking, and Wrangler dry-run bundle all pass.
