@@ -10,6 +10,7 @@ import {
 	parseChangelog,
 	processProduct,
 } from '../src/index.ts';
+import type { VersionEntry } from '../src/index.ts';
 
 class MockKVNamespace {
 	private readonly store = new Map<string, { value: string; metadata: unknown }>();
@@ -130,6 +131,72 @@ test('parseChangelog extracts multiple Claude Code versions', () => {
 		{ version: '1.2.0', content: '- Added feature A' },
 		{ version: '1.1.0', content: '- Fixed issue B' },
 	]);
+});
+
+test('parseChangelog stops after the last seen version', () => {
+	const markdown = '# Changelog\n\n## 1.3.0\n- C\n\n## 1.2.0\n- B\n\n## 1.1.0\n- A\n';
+
+	assert.deepEqual(parseChangelog(markdown, '1.2.0'), [
+		{ version: '1.3.0', content: '- C' },
+		{ version: '1.2.0', content: '- B' },
+	]);
+});
+
+// The line-by-line parser parseChangelog replaced, kept as the reference for its output
+function referenceParseChangelog(markdown: string): VersionEntry[] {
+	const entries: VersionEntry[] = [];
+	let currentVersion: string | null = null;
+	let currentContent: string[] = [];
+
+	for (const line of markdown.split('\n')) {
+		const versionMatch = line.match(/^## (\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)/);
+		if (versionMatch) {
+			if (currentVersion) {
+				entries.push({ version: currentVersion, content: currentContent.join('\n').trim() });
+			}
+			currentVersion = versionMatch[1];
+			currentContent = [];
+		} else if (currentVersion) {
+			currentContent.push(line);
+		}
+	}
+
+	if (currentVersion) {
+		entries.push({ version: currentVersion, content: currentContent.join('\n').trim() });
+	}
+
+	return entries;
+}
+
+test('parseChangelog matches the line-by-line parser at every stopping point', () => {
+	const samples = [
+		'',
+		'# Changelog\n\nNothing released yet\n',
+		'## 1.2.3\n- a\n## 1.2.2\n- b',
+		'# Changelog\n\n## 2.0.0\n- x\n\n## 1.0.0',
+		'## 3.0\n## 2.0\n## 1.0\n',
+		'# Changelog\r\n\r\n## 1.1.0\r\n- a\r\n- b\r\n\r\n## 1.0.0\r\n- c\r\n',
+		'## 2.0.0-beta.1 (2026-01-01)\n- p\n## 1.9.9\n- q\n',
+		'## Unreleased\n- u\n## 1.1\n- a\n## Notes\n- n\n## 1.0\n- b\n',
+		'## 1.1\n- a\n## 1.0\n- b\n## 1.1\n- c\n## 0.9\n- d\n',
+		'## 1.1\n```\n## 1.0.5 in code\n```\n## 1.0\n- b\n',
+		'## 1.1\n  ## 1.0.5\n- a\n## 1.0\n',
+		'## 1.1\n- a ## 1.0.5\n- b\r## 1.0.4\n## 1.0\n',
+		'## 1.1\n   \n\t\n## 1.0\n  x  \n',
+		'### 1.1\n## 1.0\n- a\n',
+		'## 1.2.3.4 extra\n- a\n## 1.2abc\n- b\n',
+	];
+
+	for (const markdown of samples) {
+		const expected = referenceParseChangelog(markdown);
+		assert.deepEqual(parseChangelog(markdown), expected, JSON.stringify(markdown));
+
+		for (const version of [...expected.map((entry) => entry.version), '0.0.0-missing']) {
+			const stopIndex = expected.findIndex((entry) => entry.version === version);
+			const expectedPrefix = stopIndex === -1 ? expected : expected.slice(0, stopIndex + 1);
+			assert.deepEqual(parseChangelog(markdown, version), expectedPrefix, `${JSON.stringify(markdown)} stopping after ${version}`);
+		}
+	}
 });
 
 test('filterStableReleases excludes drafts and prereleases', () => {

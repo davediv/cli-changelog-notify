@@ -95,7 +95,7 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
 
 ### Low impact
 
-- [ ] **4. Parse the changelog only down to the last-seen version.** Cold parse goes from 2.5 ms to 0.24 ms, with identical output on 1,037 cases, and the cost stops growing with the file. After #2 this only runs when the changelog actually changes.
+- [x] **4. Parse the changelog only down to the last-seen version.** Cold parse goes from 2.5 ms to 0.24 ms, with identical output on 1,037 cases, and the cost stops growing with the file. After #2 this only runs when the changelog actually changes.
 - [ ] **5. Protect `/check`** with a secret header, or set `workers_dev: false` if you don't use it. It got one request in 30 days, but each hit runs a full check and uses GitHub quota.
 - [ ] **6. Remove `migrateLegacyClaudeCheckpoint` from every run.** The migration finished in April 2026. It saves a KV read per run; update the legacy-migration test too.
 - [ ] **7. Add `GITHUB_TOKEN` only after #1 is deployed.** It improves reliability, not CPU. Added before #1, it would make every run a ~1 s run.
