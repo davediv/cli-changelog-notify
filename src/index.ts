@@ -48,6 +48,17 @@ interface GitHubRelease {
 	prerelease: boolean;
 }
 
+// Stored in KV alongside a product's last seen version
+interface CheckpointMetadata {
+	// ETag of the changelog the version was read from
+	etag?: string;
+}
+
+interface SourceSnapshot {
+	entries: VersionEntry[];
+	etag?: string;
+}
+
 type Logger = Pick<Console, 'log' | 'warn' | 'error'>;
 type FetchFn = typeof fetch;
 type NotificationSender = (message: string, env: Env) => Promise<boolean>;
@@ -261,8 +272,19 @@ async function sendNotifications(message: string, env: Env, logger: Logger = con
 	return successCount > 0;
 }
 
-async function fetchClaudeEntries(product: ProductDefinition, fetchFn: FetchFn, logger: Logger): Promise<VersionEntry[]> {
-	const response = await fetchFn(product.changelogUrl!);
+// Returns null when the changelog is unchanged since the stored ETag
+async function fetchClaudeEntries(
+	product: ProductDefinition,
+	fetchFn: FetchFn,
+	logger: Logger,
+	etag: string | undefined,
+): Promise<SourceSnapshot | null> {
+	const response = await fetchFn(product.changelogUrl!, etag ? { headers: { 'If-None-Match': etag } } : undefined);
+	// Checked before `ok`, which is false for 304
+	if (response.status === 304) {
+		return null;
+	}
+
 	if (!response.ok) {
 		throw new Error(`Failed to fetch changelog: ${response.status}`);
 	}
@@ -274,7 +296,7 @@ async function fetchClaudeEntries(product: ProductDefinition, fetchFn: FetchFn, 
 		logger.log(`No version entries found for ${product.label}`);
 	}
 
-	return entries;
+	return { entries, etag: response.headers.get('ETag') ?? undefined };
 }
 
 async function fetchGitHubReleasesPage(
@@ -345,18 +367,19 @@ async function fetchGitHubEntries(
 	}
 }
 
+// Returns null when the source is unchanged since the checkpoint was stored
 async function fetchEntriesForProduct(
 	product: ProductDefinition,
 	env: Env,
 	fetchFn: FetchFn,
 	logger: Logger,
-	lastSeenVersion: string | null,
-): Promise<VersionEntry[]> {
+	checkpoint: KVNamespaceGetWithMetadataResult<string, CheckpointMetadata>,
+): Promise<SourceSnapshot | null> {
 	if (product.source === 'changelog') {
-		return fetchClaudeEntries(product, fetchFn, logger);
+		return fetchClaudeEntries(product, fetchFn, logger, checkpoint.metadata?.etag);
 	}
 
-	return fetchGitHubEntries(product, env, fetchFn, lastSeenVersion);
+	return { entries: await fetchGitHubEntries(product, env, fetchFn, checkpoint.value) };
 }
 
 export async function migrateLegacyClaudeCheckpoint(env: Env, logger: Logger = console): Promise<void> {
@@ -383,19 +406,28 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 		dependencies.sendNotificationsFn ?? ((message: string, runtimeEnv: Env) => sendNotifications(message, runtimeEnv, logger));
 
 	const kvKey = getKvKey(product.id);
-	// Read the checkpoint first so sources can stop once they reach it
-	const lastSeenVersion = await env.KV.get(kvKey);
+	// Read the checkpoint first so sources can stop once they reach it, or skip content that hasn't changed
+	const checkpoint = await env.KV.getWithMetadata<CheckpointMetadata>(kvKey);
+	const lastSeenVersion = checkpoint.value;
 
-	const entries = await fetchEntriesForProduct(product, env, fetchFn, logger, lastSeenVersion);
+	const snapshot = await fetchEntriesForProduct(product, env, fetchFn, logger, checkpoint);
+	if (!snapshot) {
+		logger.log(`No new updates for ${product.label}. Current version: ${lastSeenVersion}`);
+		return;
+	}
+
+	const { entries } = snapshot;
 	if (entries.length === 0) {
 		return;
 	}
 
 	const latestVersion = entries[0].version;
+	// Store the source ETag only together with the version read from it, so a failed run is retried
+	const checkpointOptions = snapshot.etag ? { metadata: { etag: snapshot.etag } } : undefined;
 
 	if (!lastSeenVersion) {
 		logger.log(`First run for ${product.label} - storing latest version: ${latestVersion}`);
-		await env.KV.put(kvKey, latestVersion);
+		await env.KV.put(kvKey, latestVersion, checkpointOptions);
 		return;
 	}
 
@@ -408,7 +440,7 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 
 	if (newVersions.length === 0) {
 		logger.log(`No new versions to notify for ${product.label}`);
-		await env.KV.put(kvKey, latestVersion);
+		await env.KV.put(kvKey, latestVersion, checkpointOptions);
 		return;
 	}
 
@@ -424,7 +456,7 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 	}
 
 	if (allSucceeded) {
-		await env.KV.put(kvKey, latestVersion);
+		await env.KV.put(kvKey, latestVersion, checkpointOptions);
 		logger.log(`Updated ${product.label} last seen version to: ${latestVersion}`);
 	} else {
 		logger.error(`Some ${product.label} notifications failed, not updating last seen version`);

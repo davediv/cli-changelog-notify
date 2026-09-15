@@ -80,7 +80,7 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
   - **Why 30:** Codex's newest stable release is 11th in the list, behind alpha releases. A 10-release first page misses it and ends up downloading 28.6 MB. A 20-release page is smaller (4.9 MB) but needs a second 26 MB page whenever 5 or more releases land between checks.
   - **Side benefit:** 2 GitHub requests per run instead of 18 stays under the rate limit, so the Codex and Gemini CLI checks stop failing silently.
 
-- [ ] **2. Only download `CHANGELOG.md` when it has changed.** raw.githubusercontent.com returns an empty `304` for a matching `If-None-Match`.
+- [x] **2. Only download `CHANGELOG.md` when it has changed.** raw.githubusercontent.com returns an empty `304` for a matching `If-None-Match`.
   - Read the checkpoint with `getWithMetadata`, which is still one KV read.
   - Send the stored ETag. On a `304`, return "no new updates" without reading the body. Check for 304 before the `!response.ok` throw, because a 304 isn't `ok`.
   - Store the ETag as metadata in the same `KV.put` that saves the version. If notifications fail, the ETag isn't saved, so the next run still retries, as it does today.
