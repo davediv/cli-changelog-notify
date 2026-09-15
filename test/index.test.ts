@@ -12,20 +12,25 @@ import {
 } from '../src/index.ts';
 
 class MockKVNamespace {
-	private readonly store = new Map<string, string>();
+	private readonly store = new Map<string, { value: string; metadata: unknown }>();
 
-	constructor(initialValues: Record<string, string> = {}) {
+	constructor(initialValues: Record<string, string> = {}, initialMetadata: Record<string, unknown> = {}) {
 		for (const [key, value] of Object.entries(initialValues)) {
-			this.store.set(key, value);
+			this.store.set(key, { value, metadata: initialMetadata[key] ?? null });
 		}
 	}
 
 	async get(key: string): Promise<string | null> {
-		return this.store.get(key) ?? null;
+		return this.store.get(key)?.value ?? null;
 	}
 
-	async put(key: string, value: string): Promise<void> {
-		this.store.set(key, value);
+	async getWithMetadata(key: string): Promise<{ value: string | null; metadata: unknown; cacheStatus: null }> {
+		const entry = this.store.get(key);
+		return { value: entry?.value ?? null, metadata: entry?.metadata ?? null, cacheStatus: null };
+	}
+
+	async put(key: string, value: string, options: { metadata?: unknown } = {}): Promise<void> {
+		this.store.set(key, { value, metadata: options.metadata ?? null });
 	}
 }
 
@@ -69,11 +74,13 @@ function releasesPage(url: string, releases: unknown[]): unknown[] {
 
 function createFetchStub({
 	claudeMarkdown,
+	claudeEtag,
 	codexReleases,
 	geminiReleases,
 	onRequest,
 }: {
 	claudeMarkdown: string;
+	claudeEtag?: string;
 	codexReleases: unknown[];
 	geminiReleases: unknown[];
 	onRequest?: (input: string | URL | Request, init?: RequestInit) => void;
@@ -84,7 +91,11 @@ function createFetchStub({
 		const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
 		if (url.includes('anthropics/claude-code')) {
-			return new Response(claudeMarkdown, { status: 200 });
+			// Answers conditional requests like raw.githubusercontent.com
+			if (claudeEtag && new Headers(init?.headers).get('If-None-Match') === claudeEtag) {
+				return new Response(null, { status: 304, headers: { ETag: claudeEtag } });
+			}
+			return new Response(claudeMarkdown, { status: 200, headers: claudeEtag ? { ETag: claudeEtag } : {} });
 		}
 
 		if (url.includes('/repos/openai/codex/releases')) {
@@ -407,4 +418,85 @@ test('bounded GitHub paging notifies and stores the same versions as reading eve
 			}
 		}
 	}
+});
+
+test('an unchanged changelog is skipped with a conditional request', async () => {
+	const kvKey = getKvKey('claude-code');
+	const env = { KV: new MockKVNamespace({ [kvKey]: '1.0.0' }, { [kvKey]: { etag: '"v1"' } }) };
+	const requestHeaders: Headers[] = [];
+	const notifications: string[] = [];
+
+	await processProduct(PRODUCTS_BY_ID['claude-code'], env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({
+			// Would announce 1.1.0 if the body were read
+			claudeMarkdown: '## 1.1.0\n- New\n\n## 1.0.0\n- Old',
+			claudeEtag: '"v1"',
+			codexReleases: [],
+			geminiReleases: [],
+			onRequest: (_input, init) => requestHeaders.push(new Headers(init?.headers)),
+		}),
+		sendNotificationsFn: async (message) => {
+			notifications.push(message);
+			return true;
+		},
+	});
+
+	assert.equal(requestHeaders[0].get('If-None-Match'), '"v1"');
+	assert.deepEqual(notifications, []);
+	assert.deepEqual(await env.KV.getWithMetadata(kvKey), { value: '1.0.0', metadata: { etag: '"v1"' }, cacheStatus: null });
+});
+
+test('the changelog ETag is stored with the version read from it', async () => {
+	const kvKey = getKvKey('claude-code');
+	const env = { KV: new MockKVNamespace({ [kvKey]: '1.0.0' }, { [kvKey]: { etag: '"v1"' } }) };
+	const notifications: string[] = [];
+
+	await processProduct(PRODUCTS_BY_ID['claude-code'], env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({
+			claudeMarkdown: '## 1.1.0\n- New\n\n## 1.0.0\n- Old',
+			claudeEtag: '"v2"',
+			codexReleases: [],
+			geminiReleases: [],
+		}),
+		sendNotificationsFn: async (message) => {
+			notifications.push(message);
+			return true;
+		},
+	});
+
+	assert.deepEqual(notifications, ['📦 Claude Code v1.1.0\n\n- New']);
+	assert.deepEqual(await env.KV.getWithMetadata(kvKey), { value: '1.1.0', metadata: { etag: '"v2"' }, cacheStatus: null });
+});
+
+test('failed changelog notifications keep the previous ETag so the next run retries', async () => {
+	const kvKey = getKvKey('claude-code');
+	const env = { KV: new MockKVNamespace({ [kvKey]: '1.0.0' }, { [kvKey]: { etag: '"v1"' } }) };
+
+	await processProduct(PRODUCTS_BY_ID['claude-code'], env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({
+			claudeMarkdown: '## 1.1.0\n- New\n\n## 1.0.0\n- Old',
+			claudeEtag: '"v2"',
+			codexReleases: [],
+			geminiReleases: [],
+		}),
+		sendNotificationsFn: async () => false,
+	});
+
+	assert.deepEqual(await env.KV.getWithMetadata(kvKey), { value: '1.0.0', metadata: { etag: '"v1"' }, cacheStatus: null });
+});
+
+test('a first run stores the changelog ETag with the latest version', async () => {
+	const kvKey = getKvKey('claude-code');
+	const env = createEnv();
+
+	await processProduct(PRODUCTS_BY_ID['claude-code'], env, {
+		logger: noopLogger,
+		fetchFn: createFetchStub({ claudeMarkdown: '## 1.0.0\n- First', claudeEtag: '"v1"', codexReleases: [], geminiReleases: [] }),
+		sendNotificationsFn: async () => true,
+	});
+
+	assert.deepEqual(await env.KV.getWithMetadata(kvKey), { value: '1.0.0', metadata: { etag: '"v1"' }, cacheStatus: null });
 });
