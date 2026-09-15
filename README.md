@@ -10,7 +10,6 @@ Cloudflare Worker that monitors release updates for Claude Code, Codex, and Gemi
 - Automatic diffing to detect only new updates
 - Multi-platform notifications (Telegram, Discord, Slack) - configure one or all
 - Stores per-product last seen versions in Cloudflare KV to avoid duplicate notifications
-- One-time lazy migration from the legacy Claude-only KV key
 
 ## Setup
 
