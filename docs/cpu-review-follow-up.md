@@ -63,7 +63,7 @@ Each implementation commit must include its checklist update and validation.
 - [ ] **1. Verify production includes the existing optimizations.** Inspect the active
       deployment before recommending rollout. Existing bounded GitHub pagination,
       Claude conditional requests, and bounded parsing are already in this checkout.
-- [ ] **2. Add GitHub first-page conditional requests.** Store the ETag with the
+- [x] **2. Add GitHub first-page conditional requests.** Store the ETag with the
       successfully processed checkpoint and exact request identity. Only permit
       the 304 shortcut when the first page contains the checkpoint. Never save a
       validator over failed notifications; never let a first-page 304 hide an
@@ -124,3 +124,16 @@ Worker type checking is explicitly scoped to `src` and generated Worker types;
 Node test files are linted and executed by `npm test`, not type-checked against
 the Worker runtime. Removed one unnecessary regex escape flagged by ESLint.
 Validation: lint, format, Worker type check, 19 tests, and dry-run bundle.
+
+### Fix 2 — GitHub first-page revalidation
+
+Stores a validator with each successful checkpoint when the next checkpoint is
+in the first page. Request identity includes URL, representation headers, and a
+SHA-256 credential fingerprint (never the token). Changed credentials/repositories
+force a full response. Failed notifications do not change the validator. A first
+page with only prereleases cannot authorize a 304 shortcut for later stable releases.
+
+Validation: all 25 tests pass, including unchanged/seeded checkpoints for both
+products, edited notes, credential/repository changes, notification retries,
+prerelease-only first pages, and unexpected 304s. ESLint, Prettier, Worker type
+checking, and Wrangler dry-run bundle all pass.

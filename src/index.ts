@@ -49,15 +49,27 @@ interface GitHubRelease {
 	prerelease: boolean;
 }
 
+interface GitHubValidator {
+	etag: string;
+	requestKey: string;
+}
+
+interface GitHubPage {
+	releases: GitHubRelease[];
+	validator?: GitHubValidator;
+}
+
 // Stored in KV alongside a product's last seen version
 interface CheckpointMetadata {
 	// ETag of the changelog the version was read from
 	etag?: string;
+	github?: GitHubValidator;
 }
 
 interface SourceSnapshot {
 	entries: VersionEntry[];
 	etag?: string;
+	github?: GitHubValidator;
 }
 
 type Logger = Pick<Console, 'log' | 'warn' | 'error'>;
@@ -300,7 +312,8 @@ async function fetchGitHubReleasesPage(
 	fetchFn: FetchFn,
 	page: number,
 	perPage: number,
-): Promise<GitHubRelease[]> {
+	validator?: GitHubValidator,
+): Promise<GitHubPage | null> {
 	const url = new URL(`${GITHUB_API_BASE_URL}/repos/${product.githubRepo!}/releases`);
 	url.searchParams.set('page', page.toString());
 	url.searchParams.set('per_page', perPage.toString());
@@ -314,7 +327,22 @@ async function fetchGitHubReleasesPage(
 		headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
 	}
 
+	// Include the representation and credential identity without storing the token in KV.
+	const credential = env.GITHUB_TOKEN
+		? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(env.GITHUB_TOKEN))))
+				.map((byte) => byte.toString(16).padStart(2, '0'))
+				.join('')
+		: 'anonymous';
+	const requestKey = JSON.stringify([url.toString(), headers.Accept, headers['User-Agent'], credential]);
+	const etag = validator?.requestKey === requestKey ? validator.etag : undefined;
+	if (etag) {
+		headers['If-None-Match'] = etag;
+	}
+
 	const response = await fetchFn(url.toString(), { headers });
+	if (response.status === 304 && etag) {
+		return null;
+	}
 	if (!response.ok) {
 		throw new Error(`Failed to fetch GitHub releases for ${product.githubRepo}: ${response.status}`);
 	}
@@ -324,7 +352,8 @@ async function fetchGitHubReleasesPage(
 		throw new Error(`Unexpected GitHub response for ${product.githubRepo}`);
 	}
 
-	return pageReleases;
+	const responseEtag = response.headers.get('ETag');
+	return { releases: pageReleases, validator: responseEtag ? { etag: responseEtag, requestKey } : undefined };
 }
 
 // Read releases newest first and stop once processProduct has what it uses:
@@ -333,8 +362,9 @@ async function fetchGitHubEntries(
 	product: ProductDefinition,
 	env: Env,
 	fetchFn: FetchFn,
-	lastSeenVersion: string | null,
-): Promise<VersionEntry[]> {
+	checkpoint: KVNamespaceGetWithMetadataResult<string, CheckpointMetadata>,
+): Promise<SourceSnapshot | null> {
+	const lastSeenVersion = checkpoint.value;
 	const releases: VersionEntry[] = [];
 
 	// Adds a page's stable releases and reports whether reading can stop
@@ -347,17 +377,35 @@ async function fetchGitHubEntries(
 		return lastSeenVersion ? stableEntries.some((entry) => entry.version === lastSeenVersion) : releases.length > 0;
 	};
 
-	const firstPage = await fetchGitHubReleasesPage(product, env, fetchFn, 1, GITHUB_RELEASES_FIRST_PAGE_SIZE);
-	if (collect(firstPage) || firstPage.length < GITHUB_RELEASES_FIRST_PAGE_SIZE) {
-		return releases;
+	const firstPage = await fetchGitHubReleasesPage(
+		product,
+		env,
+		fetchFn,
+		1,
+		GITHUB_RELEASES_FIRST_PAGE_SIZE,
+		lastSeenVersion ? checkpoint.metadata?.github : undefined,
+	);
+	if (!firstPage) {
+		return null;
+	}
+	const foundCheckpoint = collect(firstPage.releases);
+	// The next successful checkpoint will be in this page only if it contains a stable release.
+	// processProduct saves this validator only after all notifications succeed.
+	const snapshot: SourceSnapshot = { entries: releases, github: releases.length > 0 ? firstPage.validator : undefined };
+	if (foundCheckpoint || firstPage.releases.length < GITHUB_RELEASES_FIRST_PAGE_SIZE) {
+		return snapshot;
 	}
 
 	for (let page = 1; ; page += 1) {
-		const pageReleases = await fetchGitHubReleasesPage(product, env, fetchFn, page, GITHUB_RELEASES_PER_PAGE);
+		const result = await fetchGitHubReleasesPage(product, env, fetchFn, page, GITHUB_RELEASES_PER_PAGE);
+		if (!result) {
+			throw new Error('Unexpected unvalidated GitHub page');
+		}
+		const pageReleases = result.releases;
 		// Full page 1 repeats the releases already read from the first page
 		const unreadReleases = page === 1 ? pageReleases.slice(GITHUB_RELEASES_FIRST_PAGE_SIZE) : pageReleases;
 		if (collect(unreadReleases) || pageReleases.length < GITHUB_RELEASES_PER_PAGE) {
-			return releases;
+			return snapshot;
 		}
 	}
 }
@@ -374,7 +422,7 @@ async function fetchEntriesForProduct(
 		return fetchClaudeEntries(product, fetchFn, logger, checkpoint);
 	}
 
-	return { entries: await fetchGitHubEntries(product, env, fetchFn, checkpoint.value) };
+	return fetchGitHubEntries(product, env, fetchFn, checkpoint);
 }
 
 export async function processProduct(product: ProductDefinition, env: Env, dependencies: CheckDependencies = {}): Promise<void> {
@@ -401,7 +449,11 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 
 	const latestVersion = entries[0].version;
 	// Store the source ETag only together with the version read from it, so a failed run is retried
-	const checkpointOptions = snapshot.etag ? { metadata: { etag: snapshot.etag } } : undefined;
+	const checkpointOptions = snapshot.github
+		? { metadata: { github: snapshot.github } }
+		: snapshot.etag
+			? { metadata: { etag: snapshot.etag } }
+			: undefined;
 
 	if (!lastSeenVersion) {
 		logger.log(`First run for ${product.label} - storing latest version: ${latestVersion}`);
@@ -410,6 +462,12 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 	}
 
 	if (latestVersion === lastSeenVersion) {
+		if (
+			snapshot.github &&
+			(snapshot.github.etag !== checkpoint.metadata?.github?.etag || snapshot.github.requestKey !== checkpoint.metadata?.github?.requestKey)
+		) {
+			await env.KV.put(kvKey, latestVersion, checkpointOptions);
+		}
 		logger.log(`No new updates for ${product.label}. Current version: ${latestVersion}`);
 		return;
 	}
