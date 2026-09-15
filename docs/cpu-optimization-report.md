@@ -48,7 +48,7 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
 
 ### High impact / Low effort (do these first)
 
-- [ ] **1. Stop paging GitHub once the last-seen release is found, starting with a 30-release first page.**
+- [x] **1. Stop paging GitHub once the last-seen release is found, starting with a 30-release first page.**
 
   Read the checkpoint in `processProduct` before fetching. Then move the existing request and checks into a `fetchReleasesPage` helper and loop like this:
 

@@ -2,6 +2,8 @@ const CLAUDE_CHANGELOG_URL = 'https://raw.githubusercontent.com/anthropics/claud
 const LEGACY_KV_KEY = 'last_seen_version';
 const KV_KEY_PREFIX = 'last_seen_version:';
 const GITHUB_RELEASES_PER_PAGE = 100;
+// Usually reaches the last seen release in one request, even after a run of Codex prereleases
+const GITHUB_RELEASES_FIRST_PAGE_SIZE = 30;
 const GITHUB_API_BASE_URL = 'https://api.github.com';
 const GITHUB_USER_AGENT = 'claudecode-codex-gemini-changelog-notify';
 
@@ -275,53 +277,86 @@ async function fetchClaudeEntries(product: ProductDefinition, fetchFn: FetchFn, 
 	return entries;
 }
 
-async function fetchGitHubEntries(product: ProductDefinition, env: Env, fetchFn: FetchFn): Promise<VersionEntry[]> {
+async function fetchGitHubReleasesPage(
+	product: ProductDefinition,
+	env: Env,
+	fetchFn: FetchFn,
+	page: number,
+	perPage: number,
+): Promise<GitHubRelease[]> {
+	const url = new URL(`${GITHUB_API_BASE_URL}/repos/${product.githubRepo!}/releases`);
+	url.searchParams.set('page', page.toString());
+	url.searchParams.set('per_page', perPage.toString());
+
+	const headers: HeadersInit = {
+		Accept: 'application/vnd.github+json',
+		'User-Agent': GITHUB_USER_AGENT,
+	};
+
+	if (env.GITHUB_TOKEN) {
+		headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+	}
+
+	const response = await fetchFn(url.toString(), { headers });
+	if (!response.ok) {
+		throw new Error(`Failed to fetch GitHub releases for ${product.githubRepo}: ${response.status}`);
+	}
+
+	const pageReleases = (await response.json()) as GitHubRelease[];
+	if (!Array.isArray(pageReleases)) {
+		throw new Error(`Unexpected GitHub response for ${product.githubRepo}`);
+	}
+
+	return pageReleases;
+}
+
+// Read releases newest first and stop once processProduct has what it uses:
+// the newest stable release and, when set, the last seen one
+async function fetchGitHubEntries(
+	product: ProductDefinition,
+	env: Env,
+	fetchFn: FetchFn,
+	lastSeenVersion: string | null,
+): Promise<VersionEntry[]> {
 	const releases: VersionEntry[] = [];
 
-	for (let page = 1; ; page += 1) {
-		const url = new URL(`${GITHUB_API_BASE_URL}/repos/${product.githubRepo!}/releases`);
-		url.searchParams.set('page', page.toString());
-		url.searchParams.set('per_page', GITHUB_RELEASES_PER_PAGE.toString());
-
-		const headers: HeadersInit = {
-			Accept: 'application/vnd.github+json',
-			'User-Agent': GITHUB_USER_AGENT,
-		};
-
-		if (env.GITHUB_TOKEN) {
-			headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
-		}
-
-		const response = await fetchFn(url.toString(), { headers });
-		if (!response.ok) {
-			throw new Error(`Failed to fetch GitHub releases for ${product.githubRepo}: ${response.status}`);
-		}
-
-		const pageReleases = (await response.json()) as GitHubRelease[];
-		if (!Array.isArray(pageReleases)) {
-			throw new Error(`Unexpected GitHub response for ${product.githubRepo}`);
-		}
-
+	// Adds a page's stable releases and reports whether reading can stop
+	const collect = (pageReleases: GitHubRelease[]): boolean => {
 		const stableEntries = filterStableReleases(pageReleases).map((release) => ({
 			version: release.tag_name,
 			content: release.body?.trim() ?? '',
 		}));
 		releases.push(...stableEntries);
+		return lastSeenVersion ? stableEntries.some((entry) => entry.version === lastSeenVersion) : releases.length > 0;
+	};
 
-		if (pageReleases.length < GITHUB_RELEASES_PER_PAGE) {
-			break;
-		}
+	const firstPage = await fetchGitHubReleasesPage(product, env, fetchFn, 1, GITHUB_RELEASES_FIRST_PAGE_SIZE);
+	if (collect(firstPage) || firstPage.length < GITHUB_RELEASES_FIRST_PAGE_SIZE) {
+		return releases;
 	}
 
-	return releases;
+	for (let page = 1; ; page += 1) {
+		const pageReleases = await fetchGitHubReleasesPage(product, env, fetchFn, page, GITHUB_RELEASES_PER_PAGE);
+		// Full page 1 repeats the releases already read from the first page
+		const unreadReleases = page === 1 ? pageReleases.slice(GITHUB_RELEASES_FIRST_PAGE_SIZE) : pageReleases;
+		if (collect(unreadReleases) || pageReleases.length < GITHUB_RELEASES_PER_PAGE) {
+			return releases;
+		}
+	}
 }
 
-async function fetchEntriesForProduct(product: ProductDefinition, env: Env, fetchFn: FetchFn, logger: Logger): Promise<VersionEntry[]> {
+async function fetchEntriesForProduct(
+	product: ProductDefinition,
+	env: Env,
+	fetchFn: FetchFn,
+	logger: Logger,
+	lastSeenVersion: string | null,
+): Promise<VersionEntry[]> {
 	if (product.source === 'changelog') {
 		return fetchClaudeEntries(product, fetchFn, logger);
 	}
 
-	return fetchGitHubEntries(product, env, fetchFn);
+	return fetchGitHubEntries(product, env, fetchFn, lastSeenVersion);
 }
 
 export async function migrateLegacyClaudeCheckpoint(env: Env, logger: Logger = console): Promise<void> {
@@ -347,14 +382,16 @@ export async function processProduct(product: ProductDefinition, env: Env, depen
 	const notificationSender =
 		dependencies.sendNotificationsFn ?? ((message: string, runtimeEnv: Env) => sendNotifications(message, runtimeEnv, logger));
 
-	const entries = await fetchEntriesForProduct(product, env, fetchFn, logger);
+	const kvKey = getKvKey(product.id);
+	// Read the checkpoint first so sources can stop once they reach it
+	const lastSeenVersion = await env.KV.get(kvKey);
+
+	const entries = await fetchEntriesForProduct(product, env, fetchFn, logger, lastSeenVersion);
 	if (entries.length === 0) {
 		return;
 	}
 
 	const latestVersion = entries[0].version;
-	const kvKey = getKvKey(product.id);
-	const lastSeenVersion = await env.KV.get(kvKey);
 
 	if (!lastSeenVersion) {
 		logger.log(`First run for ${product.label} - storing latest version: ${latestVersion}`);
