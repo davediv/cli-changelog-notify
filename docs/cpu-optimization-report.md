@@ -42,7 +42,7 @@ Local numbers come from Node 26 on an Apple Silicon Mac, run against real payloa
 
 ### Before deploying anything
 
-- [ ] **P0. Fix the Worker name.** `wrangler.jsonc` names the Worker `claudecode-codex-gemini-changelog-notify`, but production is `claudecode-changelog-notify`. Running `npm run deploy` would create a second Worker on the same KV namespace and cron: double the CPU and duplicate notifications.
+- [x] **P0. Fix the Worker name.** `wrangler.jsonc` names the Worker `claudecode-codex-gemini-changelog-notify`, but production is `claudecode-changelog-notify`. Running `npm run deploy` would create a second Worker on the same KV namespace and cron: double the CPU and duplicate notifications.
 
 > Don't deploy a checkout older than `fd2c500`. It would remove Codex and Gemini CLI monitoring, and the old code reads the legacy `last_seen_version` key (unchanged since April 2026), so it would likely re-send every Claude Code release since then.
 
