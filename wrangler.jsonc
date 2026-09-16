@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "claudecode-changelog-notify",
+	"name": "cli-changelog-notify",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-09-27",
 	"observability": {
