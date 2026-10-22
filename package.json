@@ -10,7 +10,7 @@
 		"cf-typegen": "wrangler types",
 		"test": "node --experimental-strip-types --test",
 		"lint": "eslint src test --max-warnings 0",
-		"format:check": "prettier --check src test docs/cpu-review-follow-up.md package.json tsconfig.json eslint.config.mjs wrangler.jsonc",
+		"format:check": "prettier --check src test package.json tsconfig.json eslint.config.mjs wrangler.jsonc",
 		"typecheck": "tsc --noEmit",
 		"build:check": "wrangler deploy --dry-run",
 		"validate": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build:check"
